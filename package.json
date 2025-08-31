@@ -6,6 +6,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
     "luxon": "^3.5.0",
+    "nodemailer": "^7.0.6",
     "postmark": "^4.0.4"
   }
 }
