@@ -57,6 +57,23 @@ const IATA_TZ: Record<string, string> = {
   SJC: 'America/Los_Angeles', OAK: 'America/Los_Angeles', SEA: 'America/Los_Angeles', PDX: 'America/Los_Angeles',
   YYZ: 'America/Toronto', YVR: 'America/Vancouver'
 };
+const IATA_COUNTRY: Record<string, string> = {
+  LHR: 'United Kingdom', LGW: 'United Kingdom',
+  CDG: 'France', ORY: 'France',
+  FRA: 'Germany', MUC: 'Germany', DUS: 'Germany', BER: 'Germany',
+  AMS: 'Netherlands',
+  MAD: 'Spain', BCN: 'Spain',
+  FCO: 'Italy',
+  CPH: 'Denmark', ARN: 'Sweden', OSL: 'Norway',
+  ZRH: 'Switzerland',
+  JFK: 'United States', EWR: 'United States', LGA: 'United States',
+  ORD: 'United States', DFW: 'United States', IAH: 'United States',
+  DTW: 'United States', MSP: 'United States',
+  DEN: 'United States', PHX: 'United States', LAS: 'United States',
+  LAX: 'United States', SFO: 'United States', SAN: 'United States',
+  SJC: 'United States', OAK: 'United States', SEA: 'United States', PDX: 'United States',
+  YYZ: 'Canada', YVR: 'Canada'
+};
 
 function aviationstackUrl() {
   const todayUtc = DateTime.utc().toFormat('yyyy-LL-dd');
@@ -103,12 +120,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       sendAtUtc = jstNextSameHm(chosen.arrUtc.toISO(), chosen.tz);
     }
 
+    // 派生情報（行き先の国・到着予定のフル書式）
+    let destCountry = '—';
+    let arrivalLocalStr = '—';
+    if (cand.length) {
+      const chosen = cand[0];
+      const destIata: string | undefined = chosen.f?.arrival?.iata;
+      const tz = chosen.tz || 'UTC';
+      const localDt = chosen.arrUtc.setZone(tz);
+      destCountry = (destIata && IATA_COUNTRY[destIata]) || (tz.includes('/') ? tz.split('/')[0] : '—');
+      arrivalLocalStr = localDt.toFormat('yyyy-LL-dd HH:mm');
+    }
+
     // ① 即時メール（割り当て通知）
     const subjectNow = `割り当てられました — ${route}`;
     const bodyNow = [
       'あなたのフライトが割り当てられました。',
-      `到着（現地）: ${localHM}`,
-      '到着の頃、日本時間で同じ時刻にもう一通メールが届きます。',
+      `行き先: ${destCountry} (${route.split('→')[1]?.trim() || '—'})`,
+      `到着予定（現地）: ${arrivalLocalStr}（${localHM}頃）`,
+      '到着の頃、日本時間の同じ時刻に、もう一通メールが届きます。',
       '',
       '— The Perfect Jet Lag'
     ].join('\n');
@@ -132,7 +162,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.warn('[kv] skip queue: redis disabled (missing or invalid UPSTASH/KV env)');
       } else {
         const key = `queue:${sendAtUtc.toFormat('yyyyLLddHHmm')}`;
-        const job = { email, route, arrive_local: localHM, send_at_utc: sendAtUtc.toISO() };
+        const job = { email, route, arrive_local: localHM, arrive_local_full: arrivalLocalStr, dest_country: destCountry, send_at_utc: sendAtUtc.toISO() };
         await (redis as Redis).rpush(key, JSON.stringify(job));
         await (redis as Redis).expire(key, 60 * 60 * 48);
         console.log('[kv] queued', key);
