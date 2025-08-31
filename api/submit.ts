@@ -18,8 +18,13 @@ const redis = new Redis({ url: UPSTASH_URL!, token: UPSTASH_TOKEN! });
 
 // ---- Gmail transporter ----
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS },
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASS,
+  },
 });
 
 // 到着“現地”のHH:mm → JSTの「次に来る同じHH:mm」をUTCで返す
