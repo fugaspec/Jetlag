@@ -12,11 +12,10 @@ console.log('[diag] has KV_REST_API_URL?', !!(process.env.UPSTASH_REDIS_REST_URL
 console.log('[diag] has KV_REST_API_TOKEN?', !!(process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN));
 
 // ---- Upstash Redis (KV) ----
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-const redis = (UPSTASH_URL && UPSTASH_TOKEN)
-  ? new Redis({ url: UPSTASH_URL, token: UPSTASH_TOKEN })
-  : null;
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
+const hasKv = !!UPSTASH_URL && !!UPSTASH_TOKEN && /^https?:\/\//.test(UPSTASH_URL);
+const redis = hasKv ? new Redis({ url: UPSTASH_URL, token: UPSTASH_TOKEN }) : null;
 
 // ---- Gmail transporter ----
 const transporter = nodemailer.createTransport({
@@ -128,11 +127,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ② 到着メールのジョブを Redis に保存（分バケット）
-    const key = `queue:${sendAtUtc.toFormat('yyyyLLddHHmm')}`;
-    const job = { email, route, arrive_local: localHM, send_at_utc: sendAtUtc.toISO() };
-    if (redis) {
-      await (redis as Redis).rpush(key, JSON.stringify(job));
-      await (redis as Redis).expire(key, 60 * 60 * 48);
+    try {
+      if (!redis) {
+        console.warn('[kv] skip queue: redis disabled (missing or invalid UPSTASH/KV env)');
+      } else {
+        const key = `queue:${sendAtUtc.toFormat('yyyyLLddHHmm')}`;
+        const job = { email, route, arrive_local: localHM, send_at_utc: sendAtUtc.toISO() };
+        await (redis as Redis).rpush(key, JSON.stringify(job));
+        await (redis as Redis).expire(key, 60 * 60 * 48);
+        console.log('[kv] queued', key);
+      }
+    } catch (e:any) {
+      console.warn('[kv] queue error:', e?.message || e);
     }
 
     return res.status(200).json({ ok: true, route, arrive_local: localHM, send_at_utc: sendAtUtc.toISO() });
