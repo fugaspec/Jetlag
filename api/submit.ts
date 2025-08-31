@@ -14,7 +14,9 @@ console.log('[diag] has KV_REST_API_TOKEN?', !!(process.env.UPSTASH_REDIS_REST_T
 // ---- Upstash Redis (KV) ----
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-const redis = new Redis({ url: UPSTASH_URL!, token: UPSTASH_TOKEN! });
+const redis = (UPSTASH_URL && UPSTASH_TOKEN)
+  ? new Redis({ url: UPSTASH_URL, token: UPSTASH_TOKEN })
+  : null;
 
 // ---- Gmail transporter ----
 const transporter = nodemailer.createTransport({
@@ -128,8 +130,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ② 到着メールのジョブを Redis に保存（分バケット）
     const key = `queue:${sendAtUtc.toFormat('yyyyLLddHHmm')}`;
     const job = { email, route, arrive_local: localHM, send_at_utc: sendAtUtc.toISO() };
-    await redis.rpush(key, JSON.stringify(job));
-    await redis.expire(key, 60 * 60 * 48); // 48hで自動削除
+    if (redis) {
+      await (redis as Redis).rpush(key, JSON.stringify(job));
+      await (redis as Redis).expire(key, 60 * 60 * 48);
+    }
 
     return res.status(200).json({ ok: true, route, arrive_local: localHM, send_at_utc: sendAtUtc.toISO() });
   } catch (e: any) {
