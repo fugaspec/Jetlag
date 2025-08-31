@@ -1,0 +1,11 @@
+{
+  "name": "jetlag-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "luxon": "^3.5.0",
+    "postmark": "^4.0.4"
+  }
+}
