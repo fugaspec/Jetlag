@@ -2,176 +2,124 @@ import { DateTime } from 'luxon';
 import nodemailer from 'nodemailer';
 import { Redis } from '@upstash/redis';
 
-// --- TEMP DIAG: env presence (booleans only) ---
-console.log('[diag] has MAIL_FROM?', !!process.env.MAIL_FROM);
-console.log('[diag] has GMAIL_USER?', !!process.env.GMAIL_USER);
-console.log('[diag] has GMAIL_PASS?', !!process.env.GMAIL_PASS);
-console.log('[diag] has AVIATIONSTACK_KEY?', !!process.env.AVIATIONSTACK_KEY);
-console.log('[diag] has KV_REST_API_URL?', !!(process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL));
-console.log('[diag] has KV_REST_API_TOKEN?', !!(process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN));
-
-// ---- Upstash Redis (KV) ----
+// --- Env / KV ---
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
 const hasKv = !!UPSTASH_URL && !!UPSTASH_TOKEN && /^https?:\/\//.test(UPSTASH_URL);
 const redis = hasKv ? new Redis({ url: UPSTASH_URL, token: UPSTASH_TOKEN }) : null;
 
-// ---- Gmail transporter ----
+// --- Gmail transporter ---
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 465,
   secure: true,
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASS,
-  },
+  auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS },
 });
 
-// 到着“現地”のHH:mm → JSTの「次に来る同じHH:mm」をUTCで返す
-function jstNextSameHm(arrivalUtcISO: string, destTz?: string | null) {
-  const arrUtc = DateTime.fromISO(arrivalUtcISO).toUTC();
-  const local = destTz ? arrUtc.setZone(destTz) : arrUtc;
-  const hour = local.hour, minute = local.minute;
-  const nowJst = DateTime.now().setZone('Asia/Tokyo');
-  let jst = nowJst.set({ hour, minute, second: 0, millisecond: 0 });
-  if (jst <= nowJst) jst = jst.plus({ days: 1 });
-  return jst.toUTC();
-}
-
-// —— Aviationstack 呼び出し（HND→西側ハブ）——
-const WEST_HUBS = [
-  'LHR','LGW','CDG','ORY','FRA','MUC','DUS','BER','AMS','MAD','BCN','FCO','CPH','ARN','OSL','ZRH',
-  'JFK','EWR','LGA','LAX','SFO','SEA','PDX','SAN','SJC','OAK','LAS','PHX','DEN','DFW','IAH','ORD','DTW','MSP','YYZ','YVR'
+// 行き先の候補（日本より“西側”（JSTより遅い）を中心に）
+const DESTS = [
+  { code: 'LHR', country: 'United Kingdom', tz: 'Europe/London' },
+  { code: 'CDG', country: 'France', tz: 'Europe/Paris' },
+  { code: 'FRA', country: 'Germany', tz: 'Europe/Berlin' },
+  { code: 'AMS', country: 'Netherlands', tz: 'Europe/Amsterdam' },
+  { code: 'MAD', country: 'Spain', tz: 'Europe/Madrid' },
+  { code: 'FCO', country: 'Italy', tz: 'Europe/Rome' },
+  { code: 'CPH', country: 'Denmark', tz: 'Europe/Copenhagen' },
+  { code: 'ZRH', country: 'Switzerland', tz: 'Europe/Zurich' },
+  { code: 'JFK', country: 'United States', tz: 'America/New_York' },
+  { code: 'LAX', country: 'United States', tz: 'America/Los_Angeles' },
+  { code: 'SFO', country: 'United States', tz: 'America/Los_Angeles' },
+  { code: 'SEA', country: 'United States', tz: 'America/Los_Angeles' },
+  { code: 'YVR', country: 'Canada', tz: 'America/Vancouver' }
 ];
-const IATA_TZ: Record<string, string> = {
-  LHR: 'Europe/London', LGW: 'Europe/London', CDG: 'Europe/Paris', ORY: 'Europe/Paris',
-  FRA: 'Europe/Berlin', MUC: 'Europe/Berlin', DUS: 'Europe/Berlin', BER: 'Europe/Berlin',
-  AMS: 'Europe/Amsterdam', MAD: 'Europe/Madrid', BCN: 'Europe/Madrid', FCO: 'Europe/Rome',
-  CPH: 'Europe/Copenhagen', ARN: 'Europe/Stockholm', OSL: 'Europe/Oslo', ZRH: 'Europe/Zurich',
-  JFK: 'America/New_York', EWR: 'America/New_York', LGA: 'America/New_York',
-  ORD: 'America/Chicago', DFW: 'America/Chicago', IAH: 'America/Chicago',
-  DTW: 'America/Detroit', MSP: 'America/Chicago',
-  DEN: 'America/Denver', PHX: 'America/Phoenix', LAS: 'America/Los_Angeles',
-  LAX: 'America/Los_Angeles', SFO: 'America/Los_Angeles', SAN: 'America/Los_Angeles',
-  SJC: 'America/Los_Angeles', OAK: 'America/Los_Angeles', SEA: 'America/Los_Angeles', PDX: 'America/Los_Angeles',
-  YYZ: 'America/Toronto', YVR: 'America/Vancouver'
-};
-const IATA_COUNTRY: Record<string, string> = {
-  LHR: 'United Kingdom', LGW: 'United Kingdom',
-  CDG: 'France', ORY: 'France',
-  FRA: 'Germany', MUC: 'Germany', DUS: 'Germany', BER: 'Germany',
-  AMS: 'Netherlands',
-  MAD: 'Spain', BCN: 'Spain',
-  FCO: 'Italy',
-  CPH: 'Denmark', ARN: 'Sweden', OSL: 'Norway',
-  ZRH: 'Switzerland',
-  JFK: 'United States', EWR: 'United States', LGA: 'United States',
-  ORD: 'United States', DFW: 'United States', IAH: 'United States',
-  DTW: 'United States', MSP: 'United States',
-  DEN: 'United States', PHX: 'United States', LAS: 'United States',
-  LAX: 'United States', SFO: 'United States', SAN: 'United States',
-  SJC: 'United States', OAK: 'United States', SEA: 'United States', PDX: 'United States',
-  YYZ: 'Canada', YVR: 'Canada'
-};
 
-function aviationstackUrl() {
-  const todayUtc = DateTime.utc().toFormat('yyyy-LL-dd');
-  const params = new URLSearchParams({
-    access_key: process.env.AVIATIONSTACK_KEY!,
-    dep_iata: 'HND',
-    arr_iata: WEST_HUBS.join(','),
-    flight_date: todayUtc,
-  });
-  return `http://api.aviationstack.com/v1/flights?${params.toString()}`;
+function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random()*arr.length)]; }
+
+// Dummy 便生成：送信時刻から 2日以内、ローカル到着時刻 = 10:00/14:00/18:00 のいずれか
+function generateDummyFlight() {
+  const dest = pick(DESTS);
+  const nowJst = DateTime.now().setZone('Asia/Tokyo');
+  // 10:00 / 14:00 / 18:00 のいずれか（現地時刻）を選ぶ
+  const hmList = [ {h:10,m:0}, {h:14,m:0}, {h:18,m:0} ];
+  const { h, m } = pick(hmList);
+  // 到着現地日付は今日～+2日のランダム
+  const addDays = Math.floor(Math.random()*2); // 0 or 1（JST 送信の“同日/翌日”想定に寄せる）
+  const arriveLocal = DateTime.now().setZone(dest.tz).plus({ days: addDays }).set({ hour: h, minute: m, second:0, millisecond:0 });
+
+  // 二通目は「到着現地と同じ“時刻”をJSTで迎えた時」に送る
+  let sendJst = DateTime.now().setZone('Asia/Tokyo').set({ hour: h, minute: m, second:0, millisecond:0 });
+  if (sendJst <= nowJst) sendJst = sendJst.plus({ days: 1 });
+  const sendAtUtc = sendJst.toUTC();
+
+  const flightNo = `JL${Math.floor(100+Math.random()*900)}`;
+  return {
+    dest,
+    flightNo,
+    arriveLocal,
+    arriveLocalHM: arriveLocal.toFormat('HH:mm'),
+    arriveLocalFull: arriveLocal.toFormat('yyyy-LL-dd HH:mm'),
+    sendAtUtc,
+    sendAtUtcISO: sendAtUtc.toISO(),
+    route: `HND → ${dest.code}`
+  };
 }
 
 export default async function handler(req: any, res: any) {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
     const { email } = req.body || {};
-    if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
-
-    const r = await fetch(aviationstackUrl()).catch(() => null as any);
-    const j = await r?.json().catch(() => null) as any;
-    const data = Array.isArray(j?.data) ? j.data : [];
-
-    const nowUtc = DateTime.utc();
-    const cand = data.map((f: any) => {
-      const arrIata = f?.arrival?.iata || null;
-      const tz = f?.arrival?.timezone || IATA_TZ[arrIata || ''] || null;
-      const iso = f?.arrival?.estimated || f?.arrival?.scheduled || null;
-      if (!iso) return null;
-      const dt = tz ? DateTime.fromISO(iso, { zone: tz }) : DateTime.fromISO(iso);
-      if (!dt.isValid) return null;
-      const arrUtc = dt.toUTC();
-      return (arrUtc > nowUtc) ? { f, tz, arrUtc } : null;
-    }).filter(Boolean) as { f: any, tz: string | null, arrUtc: DateTime }[];
-
-    let route = 'HND → WEST';
-    let localHM = '18:00';
-    let sendAtUtc = DateTime.now().setZone('Asia/Tokyo').set({ hour: 18, minute: 0, second: 0, millisecond: 0 }).toUTC();
-
-    if (cand.length) {
-      cand.sort((a, b) => a.arrUtc.toMillis() - b.arrUtc.toMillis());
-      const chosen = cand[0];
-      route = `${chosen.f?.departure?.iata || 'HND'} → ${chosen.f?.arrival?.iata || 'DEST'}`;
-      localHM = chosen.arrUtc.setZone(chosen.tz || 'UTC').toFormat('HH:mm');
-      sendAtUtc = jstNextSameHm(chosen.arrUtc.toISO(), chosen.tz);
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ error: 'Invalid email' });
     }
 
-    // 派生情報（行き先の国・到着予定のフル書式）
-    let destCountry = '—';
-    let arrivalLocalStr = '—';
-    if (cand.length) {
-      const chosen = cand[0];
-      const destIata: string | undefined = chosen.f?.arrival?.iata;
-      const tz = chosen.tz || 'UTC';
-      const localDt = chosen.arrUtc.setZone(tz);
-      destCountry = (destIata && IATA_COUNTRY[destIata]) || (tz.includes('/') ? tz.split('/')[0] : '—');
-      arrivalLocalStr = localDt.toFormat('yyyy-LL-dd HH:mm');
-    }
+    const f = generateDummyFlight();
 
-    // ① 即時メール（割り当て通知）
-    const subjectNow = `割り当てられました — ${route}`;
-    const bodyNow = [
-      'あなたのフライトが割り当てられました。',
-      `行き先: ${destCountry} (${route.split('→')[1]?.trim() || '—'})`,
-      `到着予定（現地）: ${arrivalLocalStr}（${localHM}頃）`,
-      '到着の頃、日本時間の同じ時刻に、もう一通メールが届きます。',
-      '',
-      '— The Perfect Jet Lag'
-    ].join('\n');
+    // 1通目メール（Boarding Pass 風）
+    const subject1 = `Boarding Pass — ${f.route}`;
+    const text1 =
+`Passenger\n${email}\n\nFrom\nJapan\n\nTo\n${f.dest.country}\n\nBoarding time\n${f.arriveLocalHM}\n\n- The Perfect Jet Lag\n\nCooperated with Genelec Japan`;
 
-    try {
-      await transporter.sendMail({
-        from: process.env.MAIL_FROM,
-        to: email,
-        subject: subjectNow,
-        text: bodyNow,
+    const html1 = `<!doctype html><html><head><meta charset=\"utf-8\"></head>
+  <body style=\"margin:0;padding:24px;background:#f7f7f7;\">
+    <div style=\"max-width:560px;margin:0 auto;background:#fff;padding:24px;border:1px solid #eee;\">
+      <div style=\"font-family:'OCRB','OCR-B','OCRB Std','OCR A',monospace;letter-spacing:.5px;line-height:1.8;font-size:16px;color:#111;\">
+        <div><strong>Passenger</strong><br>${email}</div>
+        <div style=\"margin-top:12px\"><strong>From</strong><br>Japan</div>
+        <div style=\"margin-top:12px\"><strong>To</strong><br>${f.dest.country}</div>
+        <div style=\"margin-top:12px\"><strong>Boarding time</strong><br>${f.arriveLocalHM}</div>
+        <div style=\"margin-top:18px\">- The Perfect Jet Lag</div>
+        <div style=\"margin-top:16px;font-size:12px;opacity:.7;\">Cooperated with Genelec Japan</div>
+      </div>
+    </div>
+  </body></html>`;
+
+    await transporter.sendMail({ from: process.env.MAIL_FROM, to: email, subject: subject1, text: text1, html: html1 });
+
+    // 2通目（到着通知）をKVに予約
+    if (redis) {
+      const key = `queue:${f.sendAtUtc.toFormat('yyyyLLddHHmm')}`; // 分単位のキュー
+      const job = JSON.stringify({
+        email,
+        route: f.route,
+        dest_country: f.dest.country,
+        arrive_local_full: f.arriveLocalFull,
+        arrive_local_hm: f.arriveLocalHM,
+        send_at_utc: f.sendAtUtcISO,
       });
-    } catch (e: any) {
-      console.error('[mail] sendMail error name=', e?.name, ' code=', e?.code, ' message=', e?.message);
-      // Return a friendly error so we can see it in the UI status
-      return res.status(500).json({ error: `mail_error:${e?.code || e?.name || 'unknown'}` });
+      await redis.rpush(key, job);
+      await redis.expire(key, 60 * 70); // 70分で自動失効（掃除）
     }
 
-    // ② 到着メールのジョブを Redis に保存（分バケット）
-    try {
-      if (!redis) {
-        console.warn('[kv] skip queue: redis disabled (missing or invalid UPSTASH/KV env)');
-      } else {
-        const key = `queue:${sendAtUtc.toFormat('yyyyLLddHHmm')}`;
-        const job = { email, route, arrive_local: localHM, arrive_local_full: arrivalLocalStr, dest_country: destCountry, send_at_utc: sendAtUtc.toISO() };
-        await (redis as Redis).rpush(key, JSON.stringify(job));
-        await (redis as Redis).expire(key, 60 * 60 * 48);
-        console.log('[kv] queued', key);
-      }
-    } catch (e:any) {
-      console.warn('[kv] queue error:', e?.message || e);
-    }
-
-    return res.status(200).json({ ok: true, route, arrive_local: localHM, send_at_utc: sendAtUtc.toISO() });
+    return res.status(200).json({
+      ok: true,
+      route: f.route,
+      to_country: f.dest.country,
+      arrive_local: f.arriveLocalHM,
+      send_at_utc: f.sendAtUtcISO,
+      note: hasKv ? 'queued' : 'kv disabled',
+    });
   } catch (e: any) {
+    console.error('[submit] error', e);
     return res.status(500).json({ error: e?.message || 'Server Error' });
   }
 }
