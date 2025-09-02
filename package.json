@@ -2,12 +2,254 @@
   "name": "jetlag-app",
   "version": "1.0.0",
   "private": true,
-  "type": "commonjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo \"no build step\"",
+    "start": "vercel dev"
+  },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
-    "@upstash/redis": "^1.35.3",
-    "luxon": "^3.7.1",
-    "nodemailer": "^7.0.6",
-    "postmark": "^4.0.4"
+    "@upstash/redis": "^1.30.0",
+    "@vercel/node": "^3.2.7",
+    "luxon": "^3.4.4",
+    "nodemailer": "^6.9.11"
+  }
+}
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { DateTime } from 'luxon';
+import nodemailer from 'nodemailer';
+import { Redis } from '@upstash/redis';
+
+// ---- Upstash Redis (KV) ----
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
+const hasKv = !!UPSTASH_URL && !!UPSTASH_TOKEN && /^https?:\/\//.test(UPSTASH_URL);
+const redis = hasKv ? new Redis({ url: UPSTASH_URL, token: UPSTASH_TOKEN }) : null;
+
+// ---- Gmail transporter ----
+const transporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
+  auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS },
+});
+
+// ── 日本より“時刻が進んでいる”行き先（IATA/国/TZ）
+const EAST_AHEAD: { iata: string; country: string; tz: string }[] = [
+  { iata:'AKL', country:'New Zealand', tz:'Pacific/Auckland' },
+  { iata:'CHC', country:'New Zealand', tz:'Pacific/Auckland' },
+  { iata:'NAN', country:'Fiji', tz:'Pacific/Fiji' },
+  { iata:'NOU', country:'New Caledonia', tz:'Pacific/Noumea' },
+  { iata:'SYD', country:'Australia', tz:'Australia/Sydney' },
+  { iata:'MEL', country:'Australia', tz:'Australia/Melbourne' },
+  { iata:'BNE', country:'Australia', tz:'Australia/Brisbane' },
+  { iata:'ADL', country:'Australia', tz:'Australia/Adelaide' },
+  { iata:'HBA', country:'Australia', tz:'Australia/Hobart' },
+];
+
+// ── 到着“現地”→「同じHH:MMのJST」送信時刻（同じ“現地の年月日”をJSTへ、過去なら+1日、48h超なら-1日）
+function jstSameDateSameHm(arrivalLocal: DateTime) {
+  const nowJst = DateTime.now().setZone('Asia/Tokyo');
+  let jst = DateTime.fromObject(
+    { year: arrivalLocal.year, month: arrivalLocal.month, day: arrivalLocal.day, hour: arrivalLocal.hour, minute: arrivalLocal.minute, second:0, millisecond:0 },
+    { zone: 'Asia/Tokyo' }
+  );
+  if (jst <= nowJst) jst = jst.plus({ days: 1 });
+  if (jst.diff(nowJst, 'hours').hours > 48) jst = jst.minus({ days: 1 });
+  return jst.toUTC();
+}
+
+// ── ダミー到着：先行TZで、今から1〜47h先・5分丸め
+function pickDummyArrival() {
+  const dest = EAST_AHEAD[Math.floor(Math.random() * EAST_AHEAD.length)];
+  const nowLocal = DateTime.now().setZone(dest.tz);
+  const plusMinutes = 60 + Math.floor(Math.random() * (47 * 60)); // 1h〜47h
+  let local = nowLocal.plus({ minutes: plusMinutes });
+  const roundedMin = local.minute - (local.minute % 5);
+  local = local.set({ minute: roundedMin, second: 0, millisecond: 0 });
+  return { dest, local };
+}
+
+// ── ボーディングタイム（JSTで現在から15〜120分先・5分丸め）
+function randomBoardingTimeJst() {
+  const now = DateTime.now().setZone('Asia/Tokyo');
+  const plus = 15 + Math.floor(Math.random() * 105); // 15〜120分
+  let t = now.plus({ minutes: plus });
+  const rounded = t.minute - (t.minute % 5);
+  return t.set({ minute: rounded, second: 0, millisecond: 0 });
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  try {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    const { email } = req.body || {};
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
+
+    // 1) ダミー便生成
+    const { dest, local } = pickDummyArrival(); // local: 到着現地日時
+    const route = `HND → ${dest.iata}`;
+    const localHM = local.toFormat('HH:mm');
+    const arrivalLocalStr = local.toFormat('yyyy-LL-dd HH:mm');
+    const sendAtUtc = jstSameDateSameHm(local); // 2通目の送信時刻（JSTで同刻→UTC）
+
+    // 1通目：ボーディングタイム（JST）
+    const boardingJst = randomBoardingTimeJst();
+    const boardingStr = boardingJst.toFormat('yyyy-LL-dd HH:mm');
+
+    // 2) 即時メール（HTML: OCR-B風 / TEXTも同梱）
+    const subjectNow = `Boarding Pass — ${route}`;
+    const textNow =
+`Passenger
+${email}
+
+From
+Japan
+
+To
+${dest.iata}
+
+Boarding time
+${boardingStr} (JST)
+
+Cooperated with Genelec Japan`;
+
+    const htmlNow = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:24px;background:#f7f7f7;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;padding:24px;border:1px solid #eee;">
+    <div style="font-family:'OCRB','OCR-B','OCRB Std','OCR A',monospace;letter-spacing:0.5px;line-height:1.6;font-size:16px;color:#111;">
+      <div style="text-transform:uppercase;">Passenger</div>
+      <div style="margin:2px 0 12px 0;">${email}</div>
+
+      <div style="text-transform:uppercase;">From</div>
+      <div style="margin:2px 0 12px 0;">Japan</div>
+
+      <div style="text-transform:uppercase;">To</div>
+      <div style="margin:2px 0 12px 0;">${dest.iata} (${dest.country})</div>
+
+      <div style="text-transform:uppercase;">Boarding time</div>
+      <div style="margin:2px 0 12px 0;">${boardingStr} <span style="opacity:.7;">(JST)</span></div>
+
+      <div style="margin-top:20px;font-size:12px;opacity:.7;">Cooperated with Genelec Japan</div>
+    </div>
+  </div>
+  </body></html>`;
+
+    try {
+      await transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: email,
+        subject: subjectNow,
+        text: textNow,
+        html: htmlNow,
+      });
+    } catch (e: any) {
+      console.error('[mail] sendMail error name=', e?.name, ' code=', e?.code, ' message=', e?.message);
+      return res.status(500).json({ error: `mail_error:${e?.code || e?.name || 'unknown'}` });
+    }
+
+    // 3) 到着メールのキュー保存（KV）
+    try {
+      if (!redis) {
+        console.warn('[kv] skip queue: redis disabled');
+      } else {
+        const key = `queue:${sendAtUtc.toFormat('yyyyLLddHHmm')}`; // UTC分キー
+        const job = {
+          email,
+          route,
+          dest_country: dest.country,
+          arrive_local_full: arrivalLocalStr,
+          arrive_local_hm: localHM,
+          send_at_utc: sendAtUtc.toISO(),
+        };
+        await (redis as Redis).rpush(key, JSON.stringify(job));
+        await (redis as Redis).expire(key, 60 * 60 * 48); // 48hで自動削除
+        console.log('[kv] queued', key, job);
+      }
+    } catch (e:any) {
+      console.warn('[kv] queue error:', e?.message || e);
+    }
+
+    return res.status(200).json({ ok: true, route, arrive_local: localHM, send_at_utc: sendAtUtc.toISO() });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || 'Server Error' });
+  }
+}
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { DateTime } from 'luxon';
+import nodemailer from 'nodemailer';
+import { Redis } from '@upstash/redis';
+
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
+const hasKv = !!UPSTASH_URL && !!UPSTASH_TOKEN && /^https?:\/\//.test(UPSTASH_URL);
+const redis = hasKv ? new Redis({ url: UPSTASH_URL, token: UPSTASH_TOKEN }) : null;
+
+const transporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
+  auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS },
+});
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  try {
+    if (!redis) return res.status(200).json({ ok: true, sent: 0, note: 'kv disabled' });
+
+    const nowUtc = DateTime.utc();
+    const key = `queue:${nowUtc.toFormat('yyyyLLddHHmm')}`;
+    const items = await redis.lrange<string>(key, 0, -1);
+    await redis.del(key);
+
+    if (!items?.length) return res.status(200).json({ ok: true, sent: 0 });
+
+    let sent = 0;
+    for (const raw of items) {
+      try {
+        const job = JSON.parse(raw) as {
+          email: string;
+          route: string;
+          dest_country: string;
+          arrive_local_full: string;
+          arrive_local_hm: string;
+          send_at_utc: string;
+        };
+
+        const subject = `Arrival — ${job.route}`;
+        const text =
+`We have just landed in ${job.dest_country}
+
+"Souls can't move that quickly, and are left behind, and must be awaited, upon arrival, like lost luggage."
+William Gibson "Pattern Recognition"
+
+- The Perfect Jet Lag
+
+Cooperated with Genelec Japan`;
+
+        const html = `<!doctype html><html><head><meta charset=\"utf-8\"></head><body style=\"margin:0;padding:24px;background:#f7f7f7;\">
+  <div style=\"max-width:560px;margin:0 auto;background:#fff;padding:24px;border:1px solid #eee;\">
+    <div style=\"font-family:'OCRB','OCR-B','OCRB Std','OCR A',monospace;letter-spacing:0.5px;line-height:1.8;font-size:16px;color:#111;\">
+      <div>We have just landed in <strong>${job.dest_country}</strong></div>
+      <div style=\"margin:14px 0 0 0;white-space:pre-wrap;\">\"Souls can't move that quickly, and are left behind, and must be awaited, upon arrival, like lost luggage.\"\nWilliam Gibson \"Pattern Recognition\"</div>
+      <div style=\"margin-top:18px;\">- The Perfect Jet Lag</div>
+      <div style=\"margin-top:16px;font-size:12px;opacity:.7;\">Cooperated with Genelec Japan</div>
+    </div>
+  </div>
+  </body></html>`;
+
+        await transporter.sendMail({
+          from: process.env.MAIL_FROM,
+          to: job.email,
+          subject,
+          text,
+          html,
+        });
+        sent++;
+      } catch (e) {
+        console.error('[dispatch] send error', e);
+      }
+    }
+
+    return res.status(200).json({ ok: true, sent });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || 'Server Error' });
   }
 }
