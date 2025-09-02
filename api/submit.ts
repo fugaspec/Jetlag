@@ -1,4 +1,3 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { DateTime } from 'luxon';
 import nodemailer from 'nodemailer';
 import { Redis } from '@upstash/redis';
@@ -86,7 +85,7 @@ function aviationstackUrl() {
   return `http://api.aviationstack.com/v1/flights?${params.toString()}`;
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
     const { email } = req.body || {};
