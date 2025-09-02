@@ -36,7 +36,7 @@
   }
   /* Layout */
   .wrap{
-    width:min(100%, 980px);
+    width:min(92vw, 560px);
     margin:36px auto 48px;
     padding:0 16px;
   }
@@ -141,8 +141,17 @@
   .toast.show{opacity:1}
   /* Small */
   @media (max-width: 720px){
-    .grid{ grid-template-columns: 92px 1fr 1fr 100px 110px; }
+    .grid{ grid-template-columns: 88px 1fr 1fr 96px 100px; }
     .cell{ min-height:44px; padding:8px 10px }
+    .email-box{ flex-wrap: wrap; }
+    .email-input{ width:100%; }
+    .btn{ width:100%; margin-top:8px; }
+  }
+  @media (max-width: 480px){
+    .wrap{ width:min(94vw, 420px); }
+    .grid{ grid-template-columns: 74px 1fr 1fr 88px 88px; }
+    .flap .tile{ width:11px; height:18px; font-size:12px; line-height:18px; }
+    .board-head{ flex-wrap:wrap; gap:8px; }
   }
 </style>
 </head>
@@ -183,7 +192,7 @@
         </div>
       </div>
 
-      <div class="hint">Sponsored by Genelec Japan</div>
+      <div class="hint">Cooperated with Genelec Japan</div>
     </div>
   </div>
 
