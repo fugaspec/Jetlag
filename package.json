@@ -2,7 +2,7 @@
   "name": "jetlag-app",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "license": "MIT",
   "scripts": {
     "build": "echo no-build",
