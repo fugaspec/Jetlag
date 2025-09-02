@@ -1,5 +1,4 @@
 const nodemailer = require('nodemailer');
-const { DateTime } = require('luxon');
 
 module.exports = async (req, res) => {
   try {
@@ -8,15 +7,24 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const { email } = req.body || {};
+    // リクエストボディの確認
+    let body = req.body;
+    if (!body || typeof body !== 'object') {
+      try {
+        const chunks = [];
+        for await (const c of req) chunks.push(c);
+        body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+      } catch {}
+    }
+
+    const email = body && body.email;
     if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
       res.status(400).json({ error: 'Invalid email' });
       return;
     }
 
-    // ダミー値（とりあえず送信が通る最小構成）
+    // --- メール本文 ---
     const boardingHM = '18:00';
-
     const textBody = [
       'Passenger',
       email,
@@ -33,16 +41,26 @@ module.exports = async (req, res) => {
       'Cooperated with Genelec Japan'
     ].join('\n');
 
+    // --- Gmail 送信設定 ---
+    const user = process.env.GMAIL_USER;
+    const pass = process.env.GMAIL_PASS;
+    const from = process.env.MAIL_FROM || user;
+
+    if (!user || !pass) {
+      res.status(500).json({
+        error: 'Missing Gmail credentials',
+        env: { hasUser: !!user, hasPass: !!pass, hasFrom: !!from }
+      });
+      return;
+    }
+
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-      auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_PASS,
-      },
+      auth: { user, pass },
     });
 
     await transporter.sendMail({
-      from: process.env.MAIL_FROM || process.env.GMAIL_USER,
+      from,
       to: email,
       subject: 'Passenger Ticket — The Perfect Jet Lag',
       text: textBody,
@@ -53,11 +71,6 @@ module.exports = async (req, res) => {
     console.error('[submit] MAIL_ERROR', e);
     res.status(500).json({
       error: e && e.message ? String(e.message) : 'Server Error',
-      env: {
-        hasUser: !!process.env.GMAIL_USER,
-        hasPass: !!process.env.GMAIL_PASS,
-        hasFrom: !!process.env.MAIL_FROM,
-      },
     });
   }
 };
