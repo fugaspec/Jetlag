@@ -119,7 +119,17 @@ export default async function handler(req: any, res: any) {
       note: hasKv ? 'queued' : 'kv disabled',
     });
   } catch (e: any) {
-    console.error('[submit] error', e);
-    return res.status(500).json({ error: e?.message || 'Server Error' });
+    console.error('[submit] MAIL_ERROR', e);
+    return res.status(500).json({
+      error: e?.message || 'Server Error',
+      stack: e?.stack || null,
+      env: {
+        hasUser: !!process.env.GMAIL_USER,
+        hasPass: !!process.env.GMAIL_PASS,
+        hasFrom: !!process.env.MAIL_FROM,
+        hasKvUrl: !!(process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL),
+        hasKvToken: !!(process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN)
+      }
+    });
   }
 }
