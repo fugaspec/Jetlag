@@ -1,0 +1,10 @@
+{
+  "name": "jetlag-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "nodemailer": "^6.9.0"
+  }
+}
