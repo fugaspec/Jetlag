@@ -20,13 +20,18 @@ module.exports = async (req, res) => {
       return;
     }
 
+    // ---- Body parse（保険つき）----
     let body = req.body;
     if (!body || typeof body !== 'object') {
       try {
         const chunks = [];
         for await (const c of req) chunks.push(c);
-        body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
-      } catch {}
+        const raw = Buffer.concat(chunks).toString('utf8');
+        body = raw ? JSON.parse(raw) : {};
+      } catch (err) {
+        console.error('[submit] Failed to parse JSON body', err);
+        body = {};
+      }
     }
 
     const email = body && body.email;
@@ -70,30 +75,46 @@ module.exports = async (req, res) => {
       text: textBody
     });
 
-    // ▼ GAS webhook to schedule 2nd email (arrival notice)
-try {
-  const webhookUrl = process.env.GAS_WEBHOOK_URL;
-  const webhookToken = process.env.GAS_TOKEN;
+    // GAS への予約（2通目の到着通知）
+    let queuedToGAS = false;
+    try {
+      const webhookUrl = process.env.GAS_WEBHOOK_URL;
+      const webhookToken = process.env.GAS_TOKEN;
 
-  if (webhookUrl && webhookToken) {
-    await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        token: webhookToken,
-        email,
-        country: chosen.country
-      })
+      console.log('[submit] GAS env present?', {
+        hasUrl: !!webhookUrl,
+        hasToken: !!webhookToken,
+      });
+      console.log('[submit] chosen', { country: chosen.country });
+
+      if (webhookUrl && webhookToken) {
+        const r = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: webhookToken,
+            email,
+            country: chosen.country
+          })
+        });
+        const text = await r.text();
+        console.log('[submit] GAS response status', r.status);
+        console.log('[submit] GAS response snippet', text.slice(0, 120));
+        queuedToGAS = r.ok;
+      } else {
+        console.warn('[submit] GAS env missing (GAS_WEBHOOK_URL / GAS_TOKEN)');
+      }
+    } catch (e) {
+      console.error('[submit] GAS webhook failed', e);
+    }
+
+    // 成功レスポンスは1回だけ返す
+    res.status(200).json({
+      ok: true,
+      to: { city: chosen.city, country: chosen.country },
+      messageId: info.messageId,
+      queuedToGAS
     });
-  } else {
-    console.warn('[submit] GAS env missing (GAS_WEBHOOK_URL / GAS_TOKEN)');
-  }
-} catch (e) {
-  console.error('[submit] GAS webhook failed', e);
-}
-
-    // 一応、割り当て結果を返しておく（UI側で使いたくなったら便利）
-    res.status(200).json({ ok: true, to: { city: chosen.city, country: chosen.country }, messageId: info.messageId });
   } catch (e) {
     console.error('[submit] MAIL_ERROR', e);
     res.status(500).json({ error: e.message || 'Server Error' });
