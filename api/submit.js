@@ -66,7 +66,7 @@ module.exports = async (req, res) => {
     const info = await transporter.sendMail({
       from: user,
       to: email,
-      subject: 'Passenger Ticket — The Perfect Jet Lag',
+      subject: 'Boarding Pass — The Perfect Jet Lag',
       text: textBody
     });
 
