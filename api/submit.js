@@ -1,5 +1,3 @@
-cd ~/fuga/VSCODE/Jetlag-app/api
-cat > submit.js <<'EOF'
 const nodemailer = require('nodemailer');
 
 module.exports = async (req, res) => {
@@ -68,4 +66,3 @@ module.exports = async (req, res) => {
     res.status(500).json({ error: e.message || 'Server Error' });
   }
 };
-EOF
