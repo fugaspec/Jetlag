@@ -70,6 +70,28 @@ module.exports = async (req, res) => {
       text: textBody
     });
 
+    // ▼ GAS webhook to schedule 2nd email (arrival notice)
+try {
+  const webhookUrl = process.env.GAS_WEBHOOK_URL;
+  const webhookToken = process.env.GAS_TOKEN;
+
+  if (webhookUrl && webhookToken) {
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: webhookToken,
+        email,
+        country: chosen.country
+      })
+    });
+  } else {
+    console.warn('[submit] GAS env missing (GAS_WEBHOOK_URL / GAS_TOKEN)');
+  }
+} catch (e) {
+  console.error('[submit] GAS webhook failed', e);
+}
+
     // 一応、割り当て結果を返しておく（UI側で使いたくなったら便利）
     res.status(200).json({ ok: true, to: { city: chosen.city, country: chosen.country }, messageId: info.messageId });
   } catch (e) {
