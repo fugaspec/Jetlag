@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Arrival — Flight Board</title>
-##
+
 <style>
 /* === Responsive safeguards (added) === */
 html, body {
@@ -49,7 +49,7 @@ th, td {
 }
 /* === end responsive safeguards === */
 </style>
-##
+
 <style>
   :root{
     --bg:#e6e6e6;          /* グレー背景 */
@@ -115,6 +115,9 @@ th, td {
     gap:0;
     border-top:1px solid #0f1114;
     border-bottom:1px solid #0f1114;
+    width:100%;              /* ← 追加 */
+    max-width:100%;          /* ← 追加 */
+    overflow-x:hidden;       /* ← 追加 */
   }
   .cell{
     border-right:1px solid var(--grid);
