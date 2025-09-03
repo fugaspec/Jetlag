@@ -33,7 +33,7 @@ module.exports = async (req, res) => {
     const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
     await transporter.verify();
 
-    const subject = `到着しました — ${country}`;
+    const subject = `We've arrived. — ${country}`;
     const textBody = [
       `We have just landed in ${country}`,
       '',
