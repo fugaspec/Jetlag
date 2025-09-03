@@ -41,7 +41,7 @@ if (!body || typeof body !== 'object') {
     const textBody = [
       `We have just landed in ${country}`,
       '',
-      `"Souls can't move that quickly, and are left behind, and must be awaited, upon arrival, like lost luggage.",
+      "Souls can't move that quickly, and are left behind, and must be awaited, upon arrival, like lost luggage.",
       '',
       '- The perfect jet lag',
       '',
