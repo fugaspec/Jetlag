@@ -4,6 +4,52 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Arrival — Flight Board</title>
+##
+<style>
+/* === Responsive safeguards (added) === */
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;           /* 横はみ出し防止 */
+}
+
+.card, .board, .panel, .container, .app, #app {
+  width: min(100%, 720px);      /* どの画面でもはみ出さない幅 */
+  max-width: 100%;
+  margin: 32px auto;
+}
+
+table {
+  width: 100%;
+  table-layout: fixed;          /* 各列が均等に縮む */
+}
+th, td {
+  word-break: break-word;       /* 長い単語・アドレスも折返し */
+  font-size: clamp(12px, 2.2vw, 16px); /* 画面幅で自動に縮小/拡大 */
+}
+
+/* スプリットフラップ風UIの横膨張を抑える */
+.splitflap, .split-flap, .flap, .ticker {
+  max-width: 100%;
+  transform-origin: left center;
+}
+
+/* スマホ最適化 */
+@media (max-width: 480px) {
+  .card, .board, .panel, .container, .app, #app {
+    width: 95%;
+    margin: 20px auto;
+  }
+  th, td {
+    font-size: 12px;
+  }
+  /* iOSの入力時ズームを抑止 */
+  input[type="email"], input[type="text"] {
+    font-size: 16px;
+  }
+}
+/* === end responsive safeguards === */
+</style>
+##
 <style>
   :root{
     --bg:#e6e6e6;          /* グレー背景 */

@@ -8,13 +8,17 @@ module.exports = async (req, res) => {
     }
 
     let body = req.body;
-    if (!body || typeof body !== 'object') {
-      try {
-        const chunks = [];
-        for await (const c of req) chunks.push(c);
-        body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
-      } catch {}
-    }
+if (!body || typeof body !== 'object') {
+  try {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const raw = Buffer.concat(chunks).toString('utf8');
+    body = raw ? JSON.parse(raw) : {};
+  } catch (err) {
+    console.error('[dispatch] Failed to parse JSON body', err);
+    body = {}; // ← fallback
+  }
+}
 
     const email = body && body.email;
     const country = body && body.country;
@@ -37,8 +41,7 @@ module.exports = async (req, res) => {
     const textBody = [
       `We have just landed in ${country}`,
       '',
-      `"Souls can't move that quickly, and are left behind, and must be awaited, upon arrival, like lost luggage."`,
-      'William Gibson "Pattern Recognition"',
+      `"Souls can't move that quickly, and are left behind, and must be awaited, upon arrival, like lost luggage.",',
       '',
       '- The perfect jet lag',
       '',
@@ -51,6 +54,8 @@ module.exports = async (req, res) => {
       subject,
       text: textBody
     });
+
+    let queuedToGAS = false;
 
     res.status(200).json({ ok: true, messageId: info.messageId });
   } catch (e) {
