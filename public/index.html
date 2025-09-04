@@ -5,6 +5,41 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Arrival — Flight Board</title>
 
+
+.ticket-box {
+  width: 100%;
+  max-width: 600px;        /* PC表示時の最大幅 */
+  aspect-ratio: 3 / 2;     /* 縦横比を固定 */
+  margin: 0 auto;          /* 中央寄せ */
+  background: #111;        /* 背景色（必要に応じて変更） */
+  border-radius: 8px;      /* デザイン調整（お好みで） */
+  overflow: hidden;        /* はみ出し防止 */
+}
+
+/* 中の要素が縦横比内に収まるよう調整 */
+.ticket-box * {
+  box-sizing: border-box;
+}
+
+/* スマホ画面用（幅768px以下） */
+@media (max-width: 768px) {
+  .ticket-box {
+    transform: scale(0.8);        /* 縮小表示 */
+    transform-origin: top center; /* 上中央を基準に縮小 */
+  }
+}
+
+/* さらに小さい画面（幅480px以下） */
+@media (max-width: 480px) {
+  .ticket-box {
+    transform: scale(0.65);
+    transform-origin: top center;
+  }
+}
+
+
+
+
 <style>
 /* === Responsive safeguards === */
 :root{
@@ -143,9 +178,6 @@ input::placeholder{color:#7b808a}
 </style>
 </head>
 <body>
-  <div class="banner">
-    The soul cannot travel quickly and is left behind, having to wait until the body arrives, much like lost baggage.
-  </div>
 
   <div class="wrap">
     <div class="board" role="region" aria-label="Flight-style board">
