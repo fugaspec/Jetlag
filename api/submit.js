@@ -1,14 +1,17 @@
+// /api/submit.js
+// Node 18 / Vercel Serverless (CommonJS)
+
 const nodemailer = require('nodemailer');
 
-// 日本より遅いタイムゾーン側の主要行き先（ざっくり飛行時間）
+// 表示用の「Boarding time」と、GASに渡す「分(min)」を両方保持
 const DESTS = [
-  { city: "London", country: "UK", duration: "12h 30m" },
-  { city: "Paris", country: "France", duration: "12h 15m" },
-  { city: "Berlin", country: "Germany", duration: "13h 00m" },
-  { city: "Amsterdam", country: "Netherlands", duration: "12h 20m" },
-  { city: "New York", country: "USA", duration: "13h 00m" },
-  { city: "Toronto", country: "Canada", duration: "12h 50m" },
-  { city: "Los Angeles", country: "USA", duration: "11h 00m" }
+  { city: "London",      country: "UK",          durationStr: "12h 30m", durationMin: 12*60 + 30 },
+  { city: "Paris",       country: "France",      durationStr: "12h 50m", durationMin: 12*60 + 50 },
+  { city: "Berlin",      country: "Germany",     durationStr: "13h 00m", durationMin: 13*60 },
+  { city: "Amsterdam",   country: "Netherlands", durationStr: "12h 20m", durationMin: 12*60 + 20 },
+  { city: "New York",    country: "USA",         durationStr: "13h 00m", durationMin: 13*60 },
+  { city: "Toronto",     country: "Canada",      durationStr: "12h 50m", durationMin: 12*60 + 50 },
+  { city: "Los Angeles", country: "USA",         durationStr: "11h 00m", durationMin: 11*60 }
 ];
 
 function pickRandom(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
@@ -20,7 +23,7 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // ---- Body parse（保険つき）----
+    // --- Body parse（保険付き）---
     let body = req.body;
     if (!body || typeof body !== 'object') {
       try {
@@ -40,8 +43,10 @@ module.exports = async (req, res) => {
       return;
     }
 
+    // --- 目的地をランダム選択 ---
     const chosen = pickRandom(DESTS);
 
+    // --- 1通目の本文（OCR-B想定のプレーンテキスト）---
     const textBody = [
       'Passenger',
       email,
@@ -53,11 +58,12 @@ module.exports = async (req, res) => {
       `${chosen.city}, ${chosen.country}`,
       '',
       'Boarding time',
-      chosen.duration,
+      chosen.durationStr,
       '',
       'Cooperated with Genelec Japan'
     ].join('\n');
 
+    // --- Gmail送信 ---
     const user = process.env.GMAIL_USER;
     const pass = process.env.GMAIL_PASS;
     if (!user || !pass) {
@@ -75,31 +81,25 @@ module.exports = async (req, res) => {
       text: textBody
     });
 
-    // GAS への予約（2通目の到着通知）
+    // --- GASへ到着メールの予約（minutes を渡す！）---
     let queuedToGAS = false;
     try {
-      const webhookUrl = process.env.GAS_WEBHOOK_URL;
-      const webhookToken = process.env.GAS_TOKEN;
-
-      console.log('[submit] GAS env present?', {
-        hasUrl: !!webhookUrl,
-        hasToken: !!webhookToken,
-      });
-      console.log('[submit] chosen', { country: chosen.country });
+      const webhookUrl   = process.env.GAS_WEBHOOK_URL; // 例: https://script.google.com/macros/s/xxxx/exec
+      const webhookToken = process.env.GAS_TOKEN;        // 例: jetlag-xyz-2025
 
       if (webhookUrl && webhookToken) {
         const r = await fetch(webhookUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            token: webhookToken,
-            email,
-            country: chosen.country
+            token:   webhookToken,
+            email:   email,
+            country: chosen.country,
+            minutes: chosen.durationMin   // ← これが “Boarding time と同じ分数”
           })
         });
         const text = await r.text();
-        console.log('[submit] GAS response status', r.status);
-        console.log('[submit] GAS response snippet', text.slice(0, 120));
+        console.log('[submit] GAS status', r.status, '| resp:', text.slice(0,120));
         queuedToGAS = r.ok;
       } else {
         console.warn('[submit] GAS env missing (GAS_WEBHOOK_URL / GAS_TOKEN)');
@@ -108,10 +108,10 @@ module.exports = async (req, res) => {
       console.error('[submit] GAS webhook failed', e);
     }
 
-    // 成功レスポンスは1回だけ返す
+    // --- レスポンス ---
     res.status(200).json({
       ok: true,
-      to: { city: chosen.city, country: chosen.country },
+      to: { city: chosen.city, country: chosen.country, boardingTime: chosen.durationStr },
       messageId: info.messageId,
       queuedToGAS
     });
